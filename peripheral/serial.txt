@@ -1,0 +1,331 @@
+int UART0_Set(int fd,int speed,int flow_ctrl,int databits,int stopbits,int parity)
+{
+   
+      int   i;
+         int   status;
+         int   speed_arr[] = { B38400, B19200, B9600, B4800, B2400, B1200, B300,
+          B38400, B19200, B9600, B4800, B2400, B1200, B300 };
+     int   name_arr[] = {38400,  19200,  9600,  4800,  2400,  1200,  300,      38400, 19200,  9600, 4800, 2400, 1200,  300 };
+         
+    struct termios options;
+   
+    /*tcgetattr(fd,&options)得到与fd指向对象的相关参数，并将它们保存于options,该函数,还可以测试配置是否正确，该串口是否可用等。若调用成功，函数返回值为0，若调用失败，函数返回值为1.
+    */
+    if  ( tcgetattr( fd,&options)  !=  0)
+       {
+          perror("SetupSerial 1");    
+          return(FALSE); 
+       }
+  
+    //设置串口输入波特率和输出波特率
+    for ( i= 0;  i < sizeof(speed_arr) / sizeof(int);  i++)
+                {
+              if  (speed == name_arr[i])
+              {       
+                          cfsetispeed(&Options, speed_arr[i]); 
+                          cfsetospeed(&Options, speed_arr[i]);  
+              }
+       }     
+   
+    //修改控制模式，保证程序不会占用串口
+    options.c_cflag |= CLOCAL;
+    //修改控制模式，使得能够从串口中读取输入数据
+    options.c_cflag |= CREAD;
+  
+    //设置数据流控制
+    switch(flow_ctrl)
+    {
+      
+       case 0 ://不使用流控制
+              options.c_cflag &= ~CRTSCTS;
+              break;   
+      
+       case 1 ://使用硬件流控制
+              options.c_cflag |= CRTSCTS;
+              break;
+       case 2 ://使用软件流控制
+              options.c_cflag |= IXON | IXOFF | IXANY;
+              break;
+    }
+    //设置数据位
+    options.c_cflag &= ~CSIZE; //屏蔽其他标志位
+    switch (databits)
+    {  
+       case 5    :
+                     options.c_cflag |= CS5;
+                     break;
+       case 6    :
+                     options.c_cflag |= CS6;
+                     break;
+       case 7    :    
+                 options.c_cflag |= CS7;
+                 break;
+       case 8:    
+                 options.c_cflag |= CS8;
+                 break;  
+       default:   
+                 fprintf(stderr,"Unsupported data size/n");
+                 return (FALSE); 
+    }
+    //设置校验位
+    switch (parity)
+    {  
+       case 'n':
+       case 'N': //无奇偶校验位。
+                 options.c_cflag &= ~PARENB; 
+                 options.c_iflag &= ~INPCK;    
+                 break; 
+       case 'o':  
+       case 'O'://设置为奇校验    
+                 options.c_cflag |= (PARODD | PARENB); 
+                 options.c_iflag |= INPCK;             
+                 break; 
+       case 'e': 
+       case 'E'://设置为偶校验  
+                 options.c_cflag |= PARENB;       
+                 options.c_cflag &= ~PARODD;       
+                 options.c_iflag |= INPCK;       
+                 break;
+       case 's':
+       case 'S': //设置为空格 
+                 options.c_cflag &= ~PARENB;
+                 options.c_cflag &= ~CSTOPB;
+                 break; 
+        default:  
+                 fprintf(stderr,"Unsupported parity/n");   
+                 return (FALSE); 
+    } 
+    // 设置停止位 
+    switch (stopbits)
+    {  
+       case 1:   
+                 options.c_cflag &= ~CSTOPB; 
+                 break; 
+       case 2:   
+                 options.c_cflag |= CSTOPB; 
+                         break;
+       default:   
+                       fprintf(stderr,"Unsupported stop bits/n"); 
+                       return (FALSE);
+    }
+   
+    //修改输出模式，原始数据输出
+    options.c_oflag &= ~OPOST;
+   
+    //设置等待时间和最小接收字符
+    options.c_cc[VTIME] = 1; /* 读取一个字符等待1*(1/10)s */  
+    options.c_cc[VMIN] = 1; /* 读取字符的最少个数为1 */
+   
+    //如果发生数据溢出，接收数据，但是不再读取
+    tcflush(fd,TCIFLUSH);
+   
+    //激活配置 (将修改后的termios数据设置到串口中）
+    if (tcsetattr(fd,TCSANOW,&options) != 0)  
+    {
+               perror("com set error!/n");  
+       return (FALSE); 
+    }
+    return (TRUE); 
+}
+
+
+
+
+许多流行的linux串口编程的版本中都没对c_iflag（termios成员变量）这个变量进行有效的设置，这样传送ASCII码时没什么问题，但传送二进制数据时遇到0x0d,0x11和0x13却会被丢掉。不用说也知道，这几个肯定是特殊字符，被用作特殊控制了。关掉ICRNL和IXON选项即可解决。
+
+       c_iflag &= ~(ICRNL | IXON);
+
+    0x0d 回车符CR
+
+    0x11 ^Q VSTART字符
+
+    0x13 ^S VSTOP字符
+
+    I CRNL 将输入的CR转换为NL  
+
+    IXON 使起动/停止输出控制流起作用
+
+在《UNIX环境高级编程第二版》第18章第11小节看到把终端I/O设置为原始模式（串口通讯就是终端I/O的原始模式）时输入属性设置为
+
+term.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+
+
+tcgetattr
+tcgetattr是一个函数，成功返回零；失败返回非零，发生失败接口将设置errno错误标识。
+中文名
+tcgetattr
+头文件
+#include<termios.h>
+函数原型
+int tcgetattr(int fd, 
+返回值
+成功返回零；失败返回非零
+目录
+1头文件
+2函数原型
+3说明
+4范例
+头文件
+编辑
+#include<termios.h>
+函数原型
+编辑
+int tcgetattr(int fd, struct termios *termios_p);
+说明
+编辑
+tcgetattr函数用于获取与终端相关的参数。参数fd为终端的文件描述符，返回的结果保存在termios 结构体中，该结构体一般包括如下的成员：
+tcflag_t c_iflag;
+tcflag_t c_oflag;
+tcflag_t c_cflag;
+tcflag_t c_lflag;
+cc_t c_cc[NCCS];
+其具体意义如下。
+c_iflag：输入模式标志，控制终端输入方式，具体参数如表1所示。
+表1 c_iflag参数表
+键 值
+说 明
+IGNBRK
+忽略BREAK键输入
+BRKINT
+如果设置了IGNBRK，BREAK键输入将被忽略
+IGNPAR
+忽略奇偶校验错误
+PARMRK
+标识奇偶校验错误
+INPCK
+允许输入奇偶校验
+ISTRIP
+去除字符的第8个比特
+INLCR
+将输入的NL（换行）转换成CR（回车）
+IGNCR
+忽略输入的回车
+ICRNL
+将输入的回车转化成换行（如果IGNCR未设置的情况下）
+IUCLC
+将输入的大写字符转换成小写字符（非POSIX）
+IXON
+允许输出时对XON/XOFF流进行控制
+IXANY
+输入任何字符将重启停止的输出
+IXOFF
+允许输入时对XON/XOFF流进行控制
+IMAXBEL
+当输入队列满的时候开始响铃
+c_oflag：输出模式标志，控制终端输出方式，具体参数如表2所示。
+表2 c_oflag参数
+键 值
+说 明
+OPOST
+处理后输出
+OLCUC
+将输出的小写字符转换成大写字符（非POSIX）
+ONLCR
+将输出的NL（换行）转换成CR（回车）及NL（换行）
+OCRNL
+将输出的CR（回车）转换成NL（换行）
+ONOCR
+第一行不输出回车符
+ONLRET
+不输出回车符
+OFILL
+发送填充字符以延迟终端输出
+OFDEL
+以ASCII码的DEL作为填充字符，如果未设置该参数，填充字符为NUL
+NLDLY
+换行输出延时，可以取NL0（不延迟）或NL1（延迟0.1s）
+CRDLY
+回车延迟，取值范围为：CR0、CR1、CR2和 CR3
+TABDLY
+水平制表符输出延迟，取值范围为：TAB0、TAB1、TAB2和TAB3
+BSDLY
+空格输出延迟，可以取BS0或BS1
+VTDLY
+垂直制表符输出延迟，可以取VT0或VT1
+FFDLY
+换页延迟，可以取FF0或FF1
+c_cflag：控制模式标志，指定终端硬件控制信息，具体参数如表3所示。
+表3 c_cflag参数
+键 值
+说 明
+CBAUD
+波特率（4+1位）（非POSIX）
+CBAUDEX
+附加波特率（1位）（非POSIX）
+CSIZE
+字符长度，取值范围为CS5、CS6、CS7或CS8
+CSTOPB
+设置两个停止位
+CREAD
+使用接收器
+PARENB
+使用奇偶校验
+PARODD
+对输入使用奇偶校验，对输出使用偶校验
+HUPCL
+关闭设备时挂起
+CLOCAL
+忽略调制解调器线路状态
+CRTSCTS
+使用RTS/CTS流控制
+c_lflag：本地模式标志，控制终端编辑功能，具体参数如表4所示。
+表4 c_lflag参数
+键 值
+说 明
+ISIG
+当输入INTR、QUIT、SUSP或DSUSP时，产生相应的信号
+ICANON
+使用标准输入模式
+XCASE
+在ICANON和XCASE同时设置的情况下，终端只使用大写。
+ECHO
+显示输入字符
+ECHOE
+如果ICANON同时设置，ERASE将删除输入的字符
+ECHOK
+如果ICANON同时设置，KILL将删除当前行
+ECHONL
+如果ICANON同时设置，即使ECHO没有设置依然显示换行符
+ECHOPRT
+如果ECHO和ICANON同时设置，将删除打印出的字符（非POSIX）
+TOSTOP
+向后台输出发送SIGTTOU信号
+c_cc[NCCS]：控制字符，用于保存终端驱动程序中的特殊字符，如输入结束符等。c_cc中定义了如表5所示的控制字符。
+表5 c_cc支持的控制字符
+宏
+说 明
+宏
+说 明
+VINTR
+Interrupt字符
+VEOL
+附加的End-of-file字符
+VQUIT
+Quit字符
+VTIME
+非规范模式读取时的超时时间
+VERASE
+Erase字符
+VSTOP
+Stop字符
+VKILL
+Kill字符
+VSTART
+Start字符
+VEOF
+End-of-file字符
+VSUSP
+Suspend字符
+VMIN
+非规范模式读取时的最小字符数
+ 	 
+tcsetattr函数用于设置终端的相关参数。参数fd为打开的终端文件描述符，参数optional_actions用于控制修改起作用的时间，而结构体termios_p中保存了要修改的参数。
+optional_actions可以取如下的值：
+TCSANOW：不等数据传输完毕就立即改变属性。
+TCSADRAIN：等待所有数据传输结束才改变属性。
+TCSAFLUSH：清空输入输出缓冲区才改变属性。
+错误信息：
+EBADF：非法的文件描述符。
+EINTR：tcsetattr函数调用被信号中断。
+EINVAL：参数optional_actions使用了非法值，或参数termios中使用了非法值。
+ENCTTY：非终端的文件描述符。
